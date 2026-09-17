@@ -1,0 +1,18 @@
+# .dockerignore
+#
+# What this file does:
+# Tells Docker which files to SKIP when copying the build context into the image.
+#
+# Feynman version:
+# When you COPY . . in a Dockerfile, Docker grabs everything in this folder.
+# Without this file, that includes things we never want inside a container —
+# like local environment secrets, OS junk files, or git history. This file
+# is the bouncer at the door saying "you're not on the list" to those files.
+
+.env
+.env.*
+*.md
+.git
+.gitignore
+Dockerfile
+.dockerignore

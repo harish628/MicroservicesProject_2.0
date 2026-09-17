@@ -1,0 +1,259 @@
+# docker-compose.yml
+#
+# What this file does:
+# Defines and wires together all 9 containers — MySQL plus our 8 services —
+# with ONE command: docker compose up --build
+#
+# Feynman version:
+# Until now, you've been running "docker run" by hand for one container at
+# a time, manually typing every -e flag and -p port mapping. That works for
+# ONE container, but gets unmanageable fast with 9. docker-compose.yml is
+# like a seating chart and instruction sheet for an entire dinner party —
+# written once, handed to one host (Docker Compose), who then seats every
+# guest (container) in the right place, introduces them to each other by
+# name (the network), and serves dinner in the right order automatically.
+
+
+# ── NETWORK ───────────────────────────────────────────────────────────────────
+# Every container below joins this one shared network. Once they're on the
+# same network, they can reach each other BY CONTAINER NAME — e.g. Order
+# Service can call "http://auth-service:8001" instead of needing to know
+# any IP address. Docker's internal DNS handles this translation automatically.
+networks:
+  shopflow-network:
+    driver: bridge
+
+# ── PERSISTENT STORAGE ────────────────────────────────────────────────────────
+# Without this, MySQL's data would live ONLY inside the container's
+# temporary filesystem — meaning every time you ran "docker compose down",
+# you'd lose your entire database. This volume persists the actual data
+# files on your host machine's disk, surviving container restarts.
+volumes:
+  mysql-data:
+
+services:
+
+  # ── MYSQL ────────────────────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: shopflow-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+    ports:
+      - "3306:3306"   # published so you can still inspect data with a GUI tool from outside Docker
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    networks:
+      - shopflow-network
+    # healthcheck: this is THE critical fix for the #1 gotcha we flagged in
+    # the design plan. MySQL containers report "started" the moment the
+    # process launches — but it takes several more seconds before it's
+    # actually ready to accept real connections. Without this healthcheck,
+    # backend services would try to connect immediately, fail, and crash.
+    #
+    # mysqladmin ping is MySQL's own built-in "are you actually ready?" check.
+    # Docker runs this every 5 seconds, up to 10 times, before giving up.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── AUTH SERVICE ─────────────────────────────────────────────────────────
+  auth-service:
+    build: ./auth-service
+    image: harishgundimeda/shopflow-project-auth-service:latest
+    container_name: shopflow-auth-service
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      DB_NAME: auth_db
+      PORT: 8001
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRY_HOURS: 24
+    ports:
+      - "8001:8001"
+    networks:
+      - shopflow-network
+    # depends_on with "condition: service_healthy" means: don't even ATTEMPT
+    # to start this container until MySQL's healthcheck above reports healthy.
+    # This is the actual fix — plain depends_on (without the condition) only
+    # waits for the container to "start," not to be truly ready.
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  # ── PRODUCT SERVICE ──────────────────────────────────────────────────────
+  product-service:
+    build: ./product-service
+    image: harishgundimeda/shopflow-project-product-service:latest
+    container_name: shopflow-product-service
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      DB_NAME: product_db
+      PORT: 8002
+      AUTH_SERVICE_URL: http://auth-service:8001
+    ports:
+      - "8002:8002"
+    networks:
+      - shopflow-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+
+  # ── ORDER SERVICE ────────────────────────────────────────────────────────
+  order-service:
+    build: ./order-service
+    image: harishgundimeda/shopflow-project-order-service:latest
+    container_name: shopflow-order-service
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      DB_NAME: order_db
+      PORT: 8003
+      AUTH_SERVICE_URL: http://auth-service:8001
+      PRODUCT_SERVICE_URL: http://product-service:8002
+      NOTIFICATION_SERVICE_URL: http://notification-service:8005
+    ports:
+      - "8003:8003"
+    networks:
+      - shopflow-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      product-service:
+        condition: service_started
+
+  # ── PAYMENT SERVICE ──────────────────────────────────────────────────────
+  payment-service:
+    build: ./payment-service
+    image: harishgundimeda/shopflow-project-payment-service:latest
+    container_name: shopflow-payment-service
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      DB_NAME: payment_db
+      PORT: 8004
+      AUTH_SERVICE_URL: http://auth-service:8001
+      ORDER_SERVICE_URL: http://order-service:8003
+      PAYMENT_SUCCESS_RATE: 0.95
+    ports:
+      - "8004:8004"
+    networks:
+      - shopflow-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+
+  # ── NOTIFICATION SERVICE ─────────────────────────────────────────────────
+  notification-service:
+    build: ./notification-service
+    image: harishgundimeda/shopflow-project-notification-service:latest
+    container_name: shopflow-notification-service
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      DB_NAME: notification_db
+      PORT: 8005
+      AUTH_SERVICE_URL: http://auth-service:8001
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      EMAIL_HOST: ${EMAIL_HOST:-smtp.gmail.com}
+      EMAIL_PORT: ${EMAIL_PORT:-587}
+      EMAIL_USER: ${EMAIL_USER:-}
+      EMAIL_PASS: ${EMAIL_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-ShopFlow <noreply@shopflow.com>}
+    ports:
+      - "8005:8005"
+    networks:
+      - shopflow-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+
+  # ── API GATEWAY ──────────────────────────────────────────────────────────
+  # Notice: no DB_HOST here — the Gateway has no database of its own.
+  # It only needs to know where every OTHER service lives.
+  api-gateway:
+    build: ./api-gateway
+    image: harishgundimeda/shopflow-project-api-gateway:latest
+    container_name: shopflow-api-gateway
+    restart: unless-stopped
+    environment:
+      PORT: 8000
+      AUTH_SERVICE_URL: http://auth-service:8001
+      PRODUCT_SERVICE_URL: http://product-service:8002
+      ORDER_SERVICE_URL: http://order-service:8003
+      PAYMENT_SERVICE_URL: http://payment-service:8004
+      NOTIFICATION_SERVICE_URL: http://notification-service:8005
+      ALLOWED_ORIGINS: http://localhost:3000,http://localhost:4200
+    ports:
+      - "8000:8000"
+    networks:
+      - shopflow-network
+    depends_on:
+      - auth-service
+      - product-service
+      - order-service
+      - payment-service
+      - notification-service
+
+  # ── REACT FRONTEND ───────────────────────────────────────────────────────
+  # Reminder from the Dockerfile comments: REACT_APP_API_URL is baked in at
+  # BUILD time, not read at container start time. We pass it here as a
+  # build arg so docker-compose controls it from one central place.
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_API_URL: '' 
+    image: harishgundimeda/shopflow-project-frontend:latest
+    container_name: shopflow-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"   # nginx inside the container listens on 80; we map it to 3000 outside
+    networks:
+      - shopflow-network
+    depends_on:
+      - api-gateway
+
+  # ── ANGULAR ADMIN DASHBOARD ──────────────────────────────────────────────
+  admin-dashboard:
+    build: 
+      context: ./admin-dashboard
+    image: harishgundimeda/shopflow-project-admin-dashboard:latest
+    container_name: shopflow-admin-dashboard
+    
+    restart: unless-stopped
+    ports:
+      - "4200:80"
+    networks:
+      - shopflow-network
+    depends_on:
+      - api-gateway
