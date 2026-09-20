@@ -1,0 +1,64 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('CODE') {
+            steps {
+                git branch: 'main', url: 'https://github.com/harish628/MicroservicesProject_2.0.git'
+            }
+        }
+        stage('Configure Environment & Listening Domain(AWS privateIp)') {
+            steps {
+                script {
+                            // Generate JWT Secret
+                            def jwtSecret = sh(
+                                script: "openssl rand -base64 32",
+                                returnStdout: true
+                            ).trim()
+                            echo "JWT Secret generated."
+
+                            // Update .env file
+                            
+                            
+                            sh """
+                                sed -i 's|^JWT_SECRET=.*|JWT_SECRET=${jwtSecret}|' '$WORKSPACE'/shopflow-project/.env
+                            """
+                                    echo ".env updated successfully."
+                                    
+                             // Update domain Address as the private Ip in place of localhost 
+                            
+                            sh '''
+                                    # Compose File 
+                                    
+                                        PUBLIC_IP=$(curl -s ifconfig.me)
+                                        sed -Ei "s|REACT_APP_API_URL: http://[^:]+:8000|REACT_APP_API_URL: http://${PUBLIC_IP}:8000|" $WORKSPACE/shopflow-project/docker-compose.yml
+                                        sed -Ei "s|ALLOWED_ORIGINS: http://[^:]+:3000,http://[^:]+:4200|ALLOWED_ORIGINS: http://${PUBLIC_IP}:3000,http://${PUBLIC_IP}:4200|" $WORKSPACE/shopflow-project/docker-compose.yml
+                                        cat $WORKSPACE/shopflow-project/docker-compose.yml | grep -E "REACT_APP_API_URL|ALLOWED_ORIGINS"
+                                    
+                                    # Frontend Angular 
+                                        
+                                        sed -Ei "s|apiUrl: 'http://[^:]+:8000'|apiUrl: 'http://${PUBLIC_IP}:8000'|" $WORKSPACE/shopflow-project/admin-dashboard/src/environments/environment.prod.ts
+                                        sed -Ei "s|apiUrl: 'http://[^:]+:8000'|apiUrl: 'http://${PUBLIC_IP}:8000'|" $WORKSPACE/shopflow-project/admin-dashboard/src/environments/environment.ts
+                            '''
+                            
+                            
+                }
+            }
+                
+        }
+        stage('COMPOSE_BUILD') {
+            steps {
+                script {
+                    sh ''' 
+                        cd "$WORKSPACE"/shopflow-project/
+                        docker compose down
+                        docker compose up -d --build
+                    '''
+                }
+            }
+        }
+        
+        
+        
+    }
+}
