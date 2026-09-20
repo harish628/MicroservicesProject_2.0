@@ -419,4 +419,3 @@ services:
     depends_on:
       api-gateway:
         condition: service_healthy
-```
