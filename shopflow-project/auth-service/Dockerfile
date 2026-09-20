@@ -54,7 +54,7 @@ FROM alpine:3.19
 
 # ca-certificates: needed if this service ever makes HTTPS calls (e.g. to other services)
 # tzdata: needed for correct timestamp handling
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata wget
 
 WORKDIR /app
 
