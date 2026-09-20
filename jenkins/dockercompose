@@ -53,6 +53,8 @@ pipeline {
                         cd "$WORKSPACE"/shopflow-project/
                         docker compose down
                         docker compose up -d --build
+                        docker compose ps
+
                     '''
                 }
             }
