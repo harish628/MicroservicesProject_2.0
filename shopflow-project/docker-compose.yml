@@ -57,10 +57,10 @@ services:
     # Docker runs this every 5 seconds, up to 10 times, before giving up.
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root}"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 10s
+      retries: 30
+      start_period: 60s
 
   # ── AUTH SERVICE ─────────────────────────────────────────────────────────
   auth-service:
@@ -88,6 +88,12 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   # ── PRODUCT SERVICE ──────────────────────────────────────────────────────
   product-service:
@@ -111,7 +117,7 @@ services:
       mysql:
         condition: service_healthy
       auth-service:
-        condition: service_started
+        condition: service_healthy
 
   # ── ORDER SERVICE ────────────────────────────────────────────────────────
   order-service:
@@ -137,9 +143,9 @@ services:
       mysql:
         condition: service_healthy
       auth-service:
-        condition: service_started
+        condition: service_healthy
       product-service:
-        condition: service_started
+        condition: service_healthy
 
   # ── PAYMENT SERVICE ──────────────────────────────────────────────────────
   payment-service:
@@ -165,7 +171,7 @@ services:
       mysql:
         condition: service_healthy
       auth-service:
-        condition: service_started
+        condition: service_healthy
 
   # ── NOTIFICATION SERVICE ─────────────────────────────────────────────────
   notification-service:
@@ -195,7 +201,7 @@ services:
       mysql:
         condition: service_healthy
       auth-service:
-        condition: service_started
+        condition: service_healthy
 
   # ── API GATEWAY ──────────────────────────────────────────────────────────
   # Notice: no DB_HOST here — the Gateway has no database of its own.
