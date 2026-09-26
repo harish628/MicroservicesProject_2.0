@@ -116,14 +116,14 @@ services:
       mysql:
         condition: service_healthy
 
-    # Use Python instead of curl.
-    # This avoids depending on curl being installed inside the image.
+    # The auth image includes wget for its runtime tools.
+    # Keep the probe independent of Python, which is not installed in Alpine.
 
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5)\""
+          "wget -qO- http://127.0.0.1:8001/health >/dev/null || exit 1"
         ]
       interval: 10s
       timeout: 5s
